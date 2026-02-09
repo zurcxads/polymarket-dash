@@ -1,378 +1,321 @@
-"use client";
+'use client'
 
-import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, TrendingUp, Clock, BarChart3, Activity } from "lucide-react";
+import { useEffect, useState, useRef } from 'react'
 
 interface Market {
-  question: string;
-  outcomePrices: string;
-  volume: string;
-  liquidity: string;
-  outcomes: string;
+  question: string
+  outcomePrices: string
+  outcomes: string
+  volume: string
+  liquidity: string
+  slug: string
 }
 
-interface PolyEvent {
-  id: string;
-  title: string;
-  slug: string;
-  volume: number;
-  liquidity: number;
-  startDate: string;
-  markets: Market[];
+interface Event {
+  title: string
+  slug: string
+  image: string
+  markets: Market[]
 }
 
-type SortMode = "volume" | "newest" | "trending";
-
-function formatVolume(v: number): string {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v.toFixed(0)}`;
-}
-
-function parseOutcomePrices(market: Market): { label: string; price: number }[] {
+function parseProbs(market: Market): { outcomes: string[]; prices: number[] } {
   try {
-    const prices: number[] = JSON.parse(market.outcomePrices || "[]");
-    const labels: string[] = JSON.parse(market.outcomes || '["Yes","No"]');
-    return labels.map((label, i) => ({
-      label,
-      price: prices[i] ?? 0,
-    }));
+    const outcomes = JSON.parse(market.outcomes) as string[]
+    const prices = (JSON.parse(market.outcomePrices) as string[]).map(Number)
+    return { outcomes, prices }
   } catch {
-    return [];
+    return { outcomes: ['Yes', 'No'], prices: [0, 0] }
   }
+}
+
+function formatNum(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`
+  return `$${n.toFixed(0)}`
+}
+
+function probColor(p: number): string {
+  if (p > 0.7) return '#00d084'
+  if (p >= 0.4) return '#f59e0b'
+  return '#ef4444'
+}
+
+function getEventVolume(e: Event): number {
+  return e.markets?.reduce((s, m) => s + (parseFloat(m.volume) || 0), 0) ?? 0
+}
+
+function getEventLiquidity(e: Event): number {
+  return e.markets?.reduce((s, m) => s + (parseFloat(m.liquidity) || 0), 0) ?? 0
+}
+
+function getTopProb(e: Event): number {
+  if (!e.markets?.length) return 0
+  const { prices } = parseProbs(e.markets[0])
+  return Math.max(...prices)
+}
+
+// Animated counter
+function AnimatedNumber({ value, prefix = '', suffix = '' }: { value: string; prefix?: string; suffix?: string }) {
+  const [display, setDisplay] = useState(value)
+  const prevRef = useRef(value)
+
+  useEffect(() => {
+    prevRef.current = value
+    setDisplay(value)
+  }, [value])
+
+  return <span>{prefix}{display}{suffix}</span>
+}
+
+function Skeleton({ w = '100%', h = 20 }: { w?: string | number; h?: number }) {
+  return <div className="skeleton" style={{ width: w, height: h }} />
 }
 
 function SkeletonCard() {
   return (
-    <div
-      style={{
-        background: "#080808",
-        border: "1px solid rgba(255,255,255,0.03)",
-        borderRadius: 12,
-        padding: 20,
-      }}
-    >
-      <div className="skeleton" style={{ height: 20, width: "80%", marginBottom: 16 }} />
-      <div className="skeleton" style={{ height: 14, width: "60%", marginBottom: 12 }} />
-      <div className="skeleton" style={{ height: 28, width: "100%", marginBottom: 8 }} />
-      <div className="skeleton" style={{ height: 28, width: "100%", marginBottom: 16 }} />
-      <div style={{ display: "flex", gap: 16 }}>
-        <div className="skeleton" style={{ height: 14, width: 80 }} />
-        <div className="skeleton" style={{ height: 14, width: 80 }} />
+    <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: 12, padding: 24 }}>
+      <Skeleton h={16} w="70%" />
+      <div style={{ marginTop: 16 }}><Skeleton h={32} w="40%" /></div>
+      <div style={{ marginTop: 12 }}><Skeleton h={8} /></div>
+      <div style={{ marginTop: 16, display: 'flex', gap: 16 }}>
+        <Skeleton h={14} w="30%" />
+        <Skeleton h={14} w="30%" />
       </div>
     </div>
-  );
+  )
 }
 
-function EventCard({ event }: { event: PolyEvent }) {
-  const market = event.markets?.[0];
-  const outcomes = market ? parseOutcomePrices(market) : [];
-  const totalVolume = event.markets?.reduce((s, m) => s + Number(m.volume || 0), 0) ?? event.volume;
-
-  return (
-    <a
-      href={`https://polymarket.com/event/${event.slug}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      style={{
-        background: "#080808",
-        border: "1px solid rgba(255,255,255,0.03)",
-        borderRadius: 12,
-        padding: 20,
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        transition: "border-color 0.2s, transform 0.2s",
-        textDecoration: "none",
-        color: "inherit",
-        cursor: "pointer",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "rgba(0,208,132,0.3)";
-        e.currentTarget.style.transform = "translateY(-2px)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "rgba(255,255,255,0.03)";
-        e.currentTarget.style.transform = "translateY(0)";
-      }}
-    >
-      <h3
-        style={{
-          fontSize: 15,
-          fontWeight: 600,
-          lineHeight: 1.4,
-          margin: 0,
-          display: "-webkit-box",
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-        }}
-      >
-        {event.title}
-      </h3>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {outcomes.slice(0, 4).map((o) => {
-          const pct = Math.round(o.price * 100);
-          const isYes = o.label.toLowerCase() === "yes";
-          const isNo = o.label.toLowerCase() === "no";
-          const color = isYes ? "#00d084" : isNo ? "#ff4757" : "#6c7ae0";
-          return (
-            <div key={o.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span
-                style={{
-                  fontSize: 12,
-                  color: "#888",
-                  width: 60,
-                  flexShrink: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {o.label}
-              </span>
-              <div
-                style={{
-                  flex: 1,
-                  height: 24,
-                  background: "#111",
-                  borderRadius: 6,
-                  overflow: "hidden",
-                  position: "relative",
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${pct}%`,
-                    background: color,
-                    opacity: 0.25,
-                    borderRadius: 6,
-                    transition: "width 0.5s ease",
-                  }}
-                />
-              </div>
-              <span
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color,
-                  width: 42,
-                  textAlign: "right",
-                  flexShrink: 0,
-                }}
-              >
-                {pct}%
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          gap: 16,
-          fontSize: 12,
-          color: "#666",
-          marginTop: "auto",
-          paddingTop: 4,
-        }}
-      >
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <BarChart3 size={12} />
-          Vol {formatVolume(totalVolume)}
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <Activity size={12} />
-          Liq {formatVolume(event.liquidity || 0)}
-        </span>
-      </div>
-    </a>
-  );
-}
-
-export default function Home() {
-  const [events, setEvents] = useState<PolyEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [sort, setSort] = useState<SortMode>("volume");
-
-  const fetchEvents = useCallback(async () => {
-    try {
-      const res = await fetch(
-        "https://gamma-api.polymarket.com/events?closed=false&order=volume24hr&ascending=false&limit=20"
-      );
-      const data: PolyEvent[] = await res.json();
-      setEvents(data);
-      setLastUpdated(new Date());
-    } catch (err) {
-      console.error("Failed to fetch events:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+export default function Dashboard() {
+  const [events, setEvents] = useState<Event[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    fetchEvents();
-    const interval = setInterval(fetchEvents, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchEvents]);
+    fetch('/api/events')
+      .then(r => r.json())
+      .then((data: Event[]) => {
+        setEvents(data.filter((e: Event) => e.markets?.length > 0))
+        setLoading(false)
+      })
+      .catch(() => {
+        setError('Failed to load data')
+        setLoading(false)
+      })
+  }, [])
 
-  const sorted = [...events].sort((a, b) => {
-    if (sort === "newest") return new Date(b.startDate).getTime() - new Date(a.startDate).getTime();
-    if (sort === "trending") {
-      const aV = a.markets?.reduce((s, m) => s + Number(m.volume || 0), 0) ?? 0;
-      const bV = b.markets?.reduce((s, m) => s + Number(m.volume || 0), 0) ?? 0;
-      const aL = a.liquidity || 1;
-      const bL = b.liquidity || 1;
-      return bV / bL - aV / aL;
-    }
-    return (b.volume || 0) - (a.volume || 0);
-  });
+  const totalVolume = events.reduce((s, e) => s + getEventVolume(e), 0)
+  const totalMarkets = events.reduce((s, e) => s + (e.markets?.length ?? 0), 0)
+  const featured = events[0]
 
-  const sortButtons: { key: SortMode; label: string; icon: React.ReactNode }[] = [
-    { key: "volume", label: "Volume", icon: <BarChart3 size={13} /> },
-    { key: "newest", label: "Newest", icon: <Clock size={13} /> },
-    { key: "trending", label: "Trending", icon: <TrendingUp size={13} /> },
-  ];
+  // Top mover = highest "yes" probability
+  const topMover = events.length > 1
+    ? events.slice(1).reduce((best, e) => getTopProb(e) > getTopProb(best) ? e : best, events[1])
+    : null
 
   return (
-    <div style={{ minHeight: "100vh", padding: "0 16px" }}>
+    <div style={{ position: 'relative', zIndex: 1, minHeight: '100vh' }}>
       {/* Header */}
-      <header
-        style={{
-          maxWidth: 1200,
-          margin: "0 auto",
-          padding: "24px 0 20px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>
+      <header style={{ padding: '24px 32px', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-0.5px' }}>
             Polymarket
-          </span>
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              background: "rgba(0,208,132,0.12)",
-              color: "#00d084",
-              padding: "3px 10px",
-              borderRadius: 20,
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: "#00d084",
-                animation: "pulse-dot 2s infinite",
-              }}
-            />
-            Live
-          </span>
+          </h1>
+          <p style={{ margin: 0, fontSize: 13, color: '#666', marginTop: 2 }}>Intelligence Dashboard</p>
         </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12, color: "#555" }}>
-          {lastUpdated && (
-            <span>Updated {lastUpdated.toLocaleTimeString()}</span>
-          )}
-          <button
-            onClick={() => {
-              setLoading(true);
-              fetchEvents();
-            }}
-            style={{
-              background: "none",
-              border: "1px solid #222",
-              borderRadius: 8,
-              color: "#888",
-              padding: "6px 8px",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="live-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#00d084' }} />
+          <span style={{ fontSize: 12, color: '#888' }} className="mono">LIVE</span>
         </div>
       </header>
 
-      {/* Sort */}
-      <div style={{ maxWidth: 1200, margin: "0 auto", paddingBottom: 16 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          {sortButtons.map((s) => (
-            <button
-              key={s.key}
-              onClick={() => setSort(s.key)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                padding: "6px 14px",
-                borderRadius: 8,
-                fontSize: 12,
-                fontWeight: 500,
-                border: "none",
-                cursor: "pointer",
-                transition: "all 0.2s",
-                background: sort === s.key ? "rgba(0,208,132,0.12)" : "#0a0a0a",
-                color: sort === s.key ? "#00d084" : "#666",
-              }}
-            >
-              {s.icon}
-              {s.label}
-            </button>
-          ))}
-        </div>
+      {/* Stats Bar */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderBottom: '1px solid #1a1a1a' }}>
+        {[
+          { label: 'TOTAL VOLUME', value: loading ? '...' : formatNum(totalVolume) },
+          { label: 'ACTIVE MARKETS', value: loading ? '...' : totalMarkets.toString() },
+          { label: 'TOP MOVER', value: loading || !topMover ? '...' : topMover.title.slice(0, 30) + (topMover.title.length > 30 ? '...' : '') },
+        ].map((stat, i) => (
+          <div key={i} style={{ padding: '16px 32px', borderRight: i < 2 ? '1px solid #1a1a1a' : 'none' }}>
+            <div style={{ fontSize: 10, color: '#555', letterSpacing: '1px', marginBottom: 4 }}>{stat.label}</div>
+            <div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>
+              <AnimatedNumber value={stat.value} />
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* Grid */}
-      <main
-        style={{
-          maxWidth: 1200,
-          margin: "0 auto",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(340, 1fr))",
-          gap: 12,
-          paddingBottom: 40,
-        }}
-      >
-        {loading
-          ? Array.from({ length: 9 }).map((_, i) => <SkeletonCard key={i} />)
-          : sorted.map((event) => <EventCard key={event.id} event={event} />)}
-      </main>
+      {error && (
+        <div style={{ padding: 32, textAlign: 'center', color: '#ef4444' }}>{error}</div>
+      )}
 
-      <style>{`
-        @media (max-width: 768px) {
-          main { grid-template-columns: 1fr !important; }
+      {/* Featured Event */}
+      {loading ? (
+        <div style={{ padding: 32 }}>
+          <Skeleton h={200} />
+        </div>
+      ) : featured && (
+        <div style={{
+          margin: '24px 32px',
+          borderRadius: 16,
+          border: '1px solid #1a1a1a',
+          overflow: 'hidden',
+          position: 'relative',
+          background: '#111',
+        }}>
+          {featured.image && (
+            <div style={{
+              position: 'absolute', inset: 0,
+              backgroundImage: `url(${featured.image})`,
+              backgroundSize: 'cover', backgroundPosition: 'center',
+              opacity: 0.15,
+            }} />
+          )}
+          <div style={{ position: 'relative', padding: '40px 48px' }}>
+            <div style={{ fontSize: 10, color: '#00d084', letterSpacing: '2px', marginBottom: 8 }}>FEATURED EVENT</div>
+            <h2 style={{ margin: 0, fontSize: 28, fontWeight: 700, maxWidth: 700, lineHeight: 1.3 }}>
+              {featured.title}
+            </h2>
+            {featured.markets[0] && (() => {
+              const { outcomes, prices } = parseProbs(featured.markets[0])
+              const topIdx = prices.indexOf(Math.max(...prices))
+              const topPrice = prices[topIdx] ?? 0
+              return (
+                <div style={{ marginTop: 24, display: 'flex', alignItems: 'flex-end', gap: 32 }}>
+                  <div>
+                    <div style={{ fontSize: 56, fontWeight: 800, lineHeight: 1 }} className="mono" >
+                      <span style={{ color: probColor(topPrice) }}>{(topPrice * 100).toFixed(0)}%</span>
+                    </div>
+                    <div style={{ fontSize: 14, color: '#888', marginTop: 4 }}>{outcomes[topIdx]}</div>
+                  </div>
+                  <div style={{ flex: 1, maxWidth: 400 }}>
+                    <div style={{ height: 6, borderRadius: 3, background: '#1a1a1a', overflow: 'hidden' }}>
+                      <div className="prob-bar" style={{ height: '100%', width: `${topPrice * 100}%`, background: `linear-gradient(90deg, ${probColor(topPrice)}, ${probColor(topPrice)}88)`, borderRadius: 3 }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+                      {outcomes.map((o, i) => (
+                        <span key={i} className="mono" style={{ fontSize: 13, color: '#888' }}>
+                          {o}: <span style={{ color: probColor(prices[i]) }}>{(prices[i] * 100).toFixed(0)}%</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 24 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: '#555', letterSpacing: '1px' }}>VOLUME</div>
+                      <div className="mono" style={{ fontSize: 16, color: '#ccc' }}>{formatNum(getEventVolume(featured))}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: '#555', letterSpacing: '1px' }}>LIQUIDITY</div>
+                      <div className="mono" style={{ fontSize: 16, color: '#ccc' }}>{formatNum(getEventLiquidity(featured))}</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+            <a
+              href={`https://polymarket.com/event/${featured.slug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: 'inline-block', marginTop: 20, fontSize: 13, color: '#00d084', textDecoration: 'none', borderBottom: '1px solid #00d08444' }}
+            >
+              View on Polymarket →
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
+        gap: 16,
+        padding: '0 32px 48px',
+      }}>
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+          : events.slice(1).map((event, i) => {
+              const m = event.markets[0]
+              if (!m) return null
+              const { outcomes, prices } = parseProbs(m)
+              const topIdx = prices.indexOf(Math.max(...prices))
+              const topPrice = prices[topIdx] ?? 0
+              const vol = getEventVolume(event)
+              const liq = getEventLiquidity(event)
+
+              return (
+                <div
+                  key={i}
+                  className="event-card animate-in"
+                  style={{
+                    background: '#111',
+                    border: '1px solid #1a1a1a',
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    position: 'relative',
+                    animationDelay: `${i * 0.05}s`,
+                  }}
+                >
+                  {event.image && (
+                    <div style={{
+                      position: 'absolute', inset: 0,
+                      backgroundImage: `url(${event.image})`,
+                      backgroundSize: 'cover', backgroundPosition: 'center',
+                      opacity: 0.08,
+                    }} />
+                  )}
+                  <div style={{ position: 'relative', padding: '20px 24px' }}>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, lineHeight: 1.4, marginBottom: 16, color: '#f5f5f5' }}>
+                      {event.title}
+                    </h3>
+
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
+                      <span className="mono" style={{ fontSize: 32, fontWeight: 800, color: probColor(topPrice) }}>
+                        {(topPrice * 100).toFixed(0)}%
+                      </span>
+                      <span style={{ fontSize: 13, color: '#888' }}>{outcomes[topIdx]}</span>
+                    </div>
+
+                    {/* Prob bar */}
+                    <div style={{ height: 4, borderRadius: 2, background: '#1a1a1a', overflow: 'hidden', marginBottom: 8 }}>
+                      <div className="prob-bar" style={{
+                        height: '100%',
+                        width: `${topPrice * 100}%`,
+                        background: `linear-gradient(90deg, ${probColor(topPrice)}, ${probColor(topPrice)}66)`,
+                        borderRadius: 2,
+                      }} />
+                    </div>
+
+                    {/* Outcomes */}
+                    <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                      {outcomes.slice(0, 2).map((o, j) => (
+                        <span key={j} className="mono" style={{ fontSize: 12, color: '#666' }}>
+                          {o}: <span style={{ color: probColor(prices[j]) }}>{(prices[j] * 100).toFixed(0)}%</span>
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Footer */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #1a1a1a', paddingTop: 12 }}>
+                      <div style={{ display: 'flex', gap: 16 }}>
+                        <span className="mono" style={{ fontSize: 11, color: '#555' }}>VOL {formatNum(vol)}</span>
+                        <span className="mono" style={{ fontSize: 11, color: '#555' }}>LIQ {formatNum(liq)}</span>
+                      </div>
+                      <a
+                        href={`https://polymarket.com/event/${event.slug}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 11, color: '#00d084', textDecoration: 'none' }}
+                      >
+                        View →
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )
+            })
         }
-        @media (min-width: 769px) and (max-width: 1024px) {
-          main { grid-template-columns: repeat(2, 1fr) !important; }
-        }
-        @media (min-width: 1025px) {
-          main { grid-template-columns: repeat(3, 1fr) !important; }
-        }
-        .animate-spin {
-          animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
+      </div>
     </div>
-  );
+  )
 }
